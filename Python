@@ -1,0 +1,77 @@
+import requests
+from bs4 import BeautifulSoup
+import feedparser
+import json
+import os
+from datetime import datetime
+
+KEYWORDS = ["new hotel opening", "hotel grand opening", "hotel launch", "hotel opens"]
+SEEN_FILE = "seen_articles.json"
+
+def load_seen_articles():
+    if os.path.exists(SEEN_FILE):
+        with open(SEEN_FILE, "r") as f:
+            return json.load(f)
+    else:
+        return []
+
+def save_seen_articles(seen):
+    with open(SEEN_FILE, "w") as f:
+        json.dump(seen, f)
+
+def check_google_news_rss():
+    url = 'https://news.google.com/rss/search?q="new+hotel+opening"'
+    feed = feedparser.parse(url)
+    articles = []
+    for entry in feed.entries:
+        title = entry.title.lower()
+        link = entry.link
+        if any(keyword in title for keyword in KEYWORDS):
+            articles.append((entry.title, link))
+    return articles
+
+def check_hospitalitynet():
+    url = "https://www.hospitalitynet.org/news/industry/"
+    resp = requests.get(url)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    articles = []
+    for item in soup.select("article h3 a"):
+        title = item.get_text().lower()
+        link = item["href"]
+        if any(keyword in title for keyword in KEYWORDS):
+            if link.startswith("/"):
+                link = "https://www.hospitalitynet.org" + link
+            articles.append((item.get_text(), link))
+    return articles
+
+def main():
+    seen = load_seen_articles()
+    current_articles = []
+
+    print(f"[{datetime.now()}] Starting scrape...")
+
+    sources = [check_google_news_rss, check_hospitalitynet]
+    for source_func in sources:
+        try:
+            articles = source_func()
+            current_articles.extend(articles)
+        except Exception as e:
+            print(f"Error in {source_func.__name__}: {e}")
+
+    if current_articles:
+        print("\nAll matched hotel openings found now:\n")
+        for title, link in current_articles:
+            print(f"- {title}\n  {link}\n")
+    else:
+        print("No articles matched keywords right now.")
+
+    # Update seen list with any new links found, so next run can track what was seen
+    new_links = [link for _, link in current_articles if link not in seen]
+    if new_links:
+        seen.extend(new_links)
+        save_seen_articles(seen)
+
+    print("Done.")
+
+if __name__ == "__main__":
+    main()
